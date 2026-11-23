@@ -85,17 +85,38 @@ describe("execute timeout and background", () => {
     }),
   )
 
-  it.effect("adds timeout and background with full_codemode", () =>
+  it.effect("with full_codemode, still takes only code and explains the options line", () =>
     Effect.sync(() => {
-      expect(Object.keys(tool(true).input.fields)).toEqual(["code", "timeout", "background"])
-      expect(Schema.decodeUnknownSync(CodeModeTool.FullInput)({ code: "1", timeout: 3000, background: true })).toEqual({
-        code: "1",
-        timeout: 3000,
-        background: true,
-      })
-      expect(() => Schema.decodeUnknownSync(CodeModeTool.FullInput)({ code: "1", timeout: 0 })).toThrow()
-      expect(() => Schema.decodeUnknownSync(CodeModeTool.FullInput)({ code: "1", timeout: 1.5 })).toThrow()
+      expect(tool(true).input).toBe(CodeMode.Input)
+      expect(tool(true).freeform).toEqual({ type: "text" })
+      expect(tool(true).description).toContain("start the code with one line `// @exec: <JSON object>`")
       expect(tool(true).description).toContain("do not poll")
+      expect(tool(false).description).not.toContain("// @exec:")
+    }),
+  )
+
+  it.effect("moves a leading options line into timeout and background, and reports one it can't apply", () =>
+    Effect.sync(() => {
+      const split = (code: string) => CodeModeTool.splitOptions({ code })
+      const ok = (input: unknown) => ({ input })
+      expect(split('// @exec: {"timeout": 5000, "background": true}\nreturn 1')).toEqual(
+        ok({ code: "return 1", timeout: 5000, background: true }),
+      )
+      expect(split('  // @exec: {"background":true}\r\nreturn 1')).toEqual(ok({ code: "return 1", background: true }))
+      // Keys execute doesn't take are dropped.
+      expect(split('// @exec: {"yield_time_ms": 10000, "timeout": 5}\nx()')).toEqual(ok({ code: "x()", timeout: 5 }))
+      expect(split("x()")).toEqual(ok({ code: "x()" }))
+      expect(CodeModeTool.splitOptions("x()")).toEqual(ok("x()"))
+      // A line that can't be applied fails the call.
+      for (const code of [
+        "// @exec: {timeout}\nx()",
+        '// @exec: {"timeout": 0}\nx()',
+        '// @exec: {"timeout": 1.5}\nx()',
+        '// @exec: ["x"]\nx()',
+      ])
+        expect(split(code)).toEqual({ error: expect.stringContaining("must be followed by a JSON object") })
+      for (const code of ['// @exec: {"timeout": 5}', '// @exec: {"timeout": 5}\n'])
+        expect(split(code)).toEqual({ error: expect.stringContaining("Put the program") })
     }),
   )
 

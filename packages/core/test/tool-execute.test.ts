@@ -5,7 +5,10 @@ import { CodeModeDiffs } from "@opencode/core/codemode/diffs"
 import { CodeModeTool } from "@opencode/core/codemode/tool"
 import { Permission } from "@opencode/core/permission"
 import { Tool } from "@opencode/core/tool"
-import { execute } from "@opencode/core/tool/runtime"
+import { definition, execute } from "@opencode/core/tool/runtime"
+import { ai, type LanguageModel } from "@opencode/ai/effect"
+import { Anthropic, OpenAI } from "@opencode/ai/providers"
+import { compileRequest } from "@opencode/ai/testing"
 import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
@@ -79,6 +82,19 @@ test("with full_codemode, execute names Bun's file APIs instead of ruling out fi
     "`fetch` is available for HTTP requests, and Bun's file APIs (`Bun.file`, `Bun.write`, `Bun.Glob`) for files, in place of Node's `fs`. Imports and timers are unavailable: there is no `setTimeout` or sleep. All other external access goes through `tools`.",
   )
   expect(description).not.toContain("direct filesystem access")
+})
+
+test("with full_codemode, execute is the same raw-code tool for every model", async () => {
+  const tools = [definition(createCodeMode(new Map(), allowAll, codeModeServices(process.cwd())))]
+  const body = (model: LanguageModel) =>
+    Effect.runPromise(
+      compileRequest(ai.request({ model, prompt: "Run it.", tools })).pipe(Effect.map((prepared) => prepared.body)),
+    )
+  const gpt = await body(OpenAI.model("gpt-6.2-sol", { apiKey: "test" }))
+  expect(gpt.tools).toMatchObject([{ type: "custom", name: "execute", format: { type: "text" } }])
+  expect(gpt.tools[0].description).toContain("`// @exec: <JSON object>`")
+  const claude = await body(Anthropic.model("claude-opus-5-5", { apiKey: "test" }))
+  expect(Object.keys(claude.tools[0].input_schema.properties)).toEqual(["code"])
 })
 
 test("canonical execution distinguishes declared, model-only, and raw schema outputs", async () => {

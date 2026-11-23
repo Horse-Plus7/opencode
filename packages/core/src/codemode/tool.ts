@@ -13,7 +13,7 @@ import type {
 } from "@opencode/schema/tool"
 import { Identifier } from "@opencode/schema/identifier"
 import { CallID } from "@opencode/schema/tool"
-import { Clock, Context, Effect, Ref, Schema, Scope, Semaphore } from "effect"
+import { Clock, Context, Effect, Option, Ref, Schema, Scope, Semaphore } from "effect"
 import { toSessionError } from "../session/to-session-error.js"
 import { definition, normalizedName } from "../tool/runtime.js"
 import { FileAccess } from "../file-access.js"
@@ -122,21 +122,40 @@ const description = (full: boolean) =>
     ...(full
       ? [
           "Scripts still running after their timeout move to the background and keep running. Background scripts return a job ID immediately, and you will be notified when they complete; do not poll for them.",
+          `To set options, start the code with one line \`${OPTIONS_PREFIX} <JSON object>\` and put the program on the next line, for example \`${OPTIONS_PREFIX} {"background": true}\`. Options: \`timeout\`, the milliseconds to wait before the script moves to the background (default ${2 * 60 * 1_000}; it is never stopped); \`background\`, true to return its job ID immediately, for long-running work.`,
         ]
       : []),
   ].join("\n")
 
+/** The optional first line of an `execute` program that sets its `timeout` and `background`, with `full_codemode`. */
+export const OPTIONS_PREFIX = "// @exec:"
+
 // Mirrors the shell tool's `timeout` and `background`; only with `full_codemode`, where every script runs as a job.
-export const FullInput = Schema.Struct({
-  ...CodeMode.Input.fields,
-  timeout: Schema.optionalKey(PositiveInt).annotate({
-    description: `Optional time in milliseconds to wait for the script before moving it to the background (default ${2 * 60 * 1_000}). The script keeps running in the background after that; it is never stopped. With \`background: true\` the call returns immediately instead.`,
-  }),
-  background: Schema.optionalKey(Schema.Boolean).annotate({
-    description:
-      "Run the script in the background and return immediately with its job ID (useful for long-running work). You will be notified when it completes. DO NOT poll for completion.",
-  }),
+const Options = Schema.Struct({
+  timeout: Schema.optionalKey(PositiveInt),
+  background: Schema.optionalKey(Schema.Boolean),
 })
+const decodeOptions = Schema.decodeUnknownOption(Schema.fromJsonString(Options))
+
+/**
+ * Moves a leading options line out of `code` into `timeout` and `background`, dropping keys `execute` doesn't take. A
+ * line that isn't valid options, or has no program after it, fails the call so the model learns its options were not
+ * applied.
+ */
+export const splitOptions = (input: unknown): { readonly input: unknown } | { readonly error: string } => {
+  if (typeof input !== "object" || input === null) return { input }
+  const code = (input as { code?: unknown }).code
+  if (typeof code !== "string" || !/^[ \t]*\/\/ @exec:/.test(code)) return { input }
+  const line = /^[ \t]*\/\/ @exec:([^\r\n]*)\r?\n/.exec(code)
+  if (!line || line[0].length === code.length)
+    return { error: `Put the program on the lines after \`${OPTIONS_PREFIX}\`.` }
+  const options = Option.getOrUndefined(decodeOptions(line[1]))
+  if (!options)
+    return {
+      error: `\`${OPTIONS_PREFIX}\` must be followed by a JSON object with \`timeout\` (a positive integer of milliseconds) and \`background\` (a boolean), for example \`${OPTIONS_PREFIX} {"background": true}\`.`,
+    }
+  return { input: { ...input, ...options, code: code.slice(line[0].length) } }
+}
 
 export const create = (
   inventory: Inventory,
@@ -148,7 +167,7 @@ export const create = (
   return {
     name: "execute",
     description: description(services !== undefined),
-    input: services ? FullInput : CodeMode.Input,
+    input: CodeMode.Input,
     freeform: { type: "text" },
     output: ExecuteOutput,
     execute: ({ code }, context) =>

@@ -384,7 +384,14 @@ const layer = Layer.effect(
               }
               const initialName = input.definitions?.get(input.call.name)?.name ?? input.call.name
               const initial = initialName === "execute" && codemode ? codemode.tool : direct.get(initialName)
-              const event = yield* beforeExecute(input.call.name, initial, input.call.input, context)
+              // With full_codemode, execute takes its options on the first line of its code. Hooks and the job see them as
+              // fields.
+              const split =
+                full && initial !== undefined && initial === codemode?.tool
+                  ? CodeModeTool.splitOptions(input.call.input)
+                  : { input: input.call.input }
+              if ("error" in split) return yield* new Tool.Error({ message: split.error })
+              const event = yield* beforeExecute(input.call.name, initial, split.input, context)
               const requested = input.definitions?.get(event.tool)
               // Preserve session context removal and alias resolution, now after the repair hook.
               if (!requested && input.definitions && (direct.has(event.tool) || codemode?.tool.name === event.tool))
