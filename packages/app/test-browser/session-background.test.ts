@@ -340,6 +340,7 @@ describe("createSessionBackground", () => {
   test("names a script by the title the execute tool gave it", () => {
     createRoot((dispose) => {
       const code = '// @options: {"background": true}\nawait build()'
+
       const background = createSessionBackground({
         sessionID: () => "root",
         messages: () => [
