@@ -71,7 +71,8 @@ export function createSessionBackground(input: {
         if (part.type === "tool" && part.name === "execute" && part.state.status === "completed") {
           const jobID = text(part.state.metadata?.jobID)
 
-          if (jobID) scripts.set(jobID, firstLine(text(part.state.input.code)))
+          // The execute tool titles a script from its code; a call from before titles falls back to its first line.
+          if (jobID) scripts.set(jobID, text(part.state.metadata?.title) ?? firstLine(text(part.state.input.code)))
         }
 
         if (part.type !== "tool" || part.name !== "subagent" || part.state.status === "streaming") return
@@ -231,7 +232,7 @@ export function createSessionBackground(input: {
         {
           id: job.id,
           type: "script" as const,
-          label: job.title ?? current.scripts.get(job.id) ?? job.id,
+          label: current.scripts.get(job.id) ?? job.id,
           started: job.time.started,
         },
       ]

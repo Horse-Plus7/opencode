@@ -48,7 +48,7 @@ test("ownedJobs follows a subagent job to its child when the child's parent is n
   ])
 })
 
-test("scriptLabel names a script by its job title, then its first line of code", () => {
+test("scriptLabel names a script by its call's title, then its first line of code, then its job title", () => {
   const job: JobInfo = { kind: "codemode", id: "cm_1", sessionID: "session", status: "running", time: { started: 1 } }
   const messages = [
     {
@@ -65,10 +65,13 @@ test("scriptLabel names a script by its job title, then its first line of code",
     },
   ] as unknown as SessionMessageInfo[]
   expect(scriptLabel(messages, job)).toBe("// Build both")
-  // The job's title, which the execute tool sets, names the script first.
-  expect(scriptLabel(messages, { ...job, title: 'await tools.shell({ command: "bun test" })' })).toBe(
+  // A title the execute tool set on the call names the script first.
+  const titled = structuredClone(messages) as unknown as Array<{ content: Array<{ state: { metadata: Record<string, unknown> } }> }>
+  titled[0]!.content[0]!.state.metadata.title = 'await tools.shell({ command: "bun test" })'
+  expect(scriptLabel(titled as unknown as SessionMessageInfo[], { ...job, title: "Code Mode script" })).toBe(
     'await tools.shell({ command: "bun test" })',
   )
+  expect(scriptLabel(messages, { ...job, title: "Code Mode script" })).toBe("// Build both")
   expect(scriptLabel([], { ...job, title: "Build" })).toBe("Build")
   expect(scriptLabel([], job)).toBe("Script")
 })

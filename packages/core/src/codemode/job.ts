@@ -131,7 +131,7 @@ export const make = Effect.fnUntraced(function* (
         return {
           content: [{ type: "text" as const, text }],
           output: { output: text, toolCalls: [], files: [] },
-          metadata: { jobID: id },
+          metadata: { jobID: id, ...title },
         }
       }),
     )

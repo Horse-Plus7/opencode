@@ -81,25 +81,24 @@ export function ownedJobs(jobs: readonly JobInfo[], sessionID: string, parentID:
   })
 }
 
-// A script is named by its job's title, which the execute tool sets from its code. A job without one falls back to the
-// first line of the code that started it.
+// A script moved to the background ends its execute call with the job's id. The call's title, which the execute tool
+// sets from its code, names it; a call from before titles falls back to its first line of code.
 export function scriptLabel(messages: readonly SessionMessageInfo[], job: JobInfo) {
-  if (job.title) return job.title
-  const code = messages
+  const part = messages
     .flatMap((message) => (message.type === "assistant" ? message.content : []))
     .flatMap((part) =>
       part.type === "tool" &&
       part.name === "execute" &&
       part.state.status === "completed" &&
-      part.state.metadata?.jobID === job.id &&
-      typeof part.state.input.code === "string"
-        ? [part.state.input.code]
+      part.state.metadata?.jobID === job.id
+        ? [part.state]
         : [],
     )
     .at(-1)
-  const line = code
+  if (typeof part?.metadata?.title === "string" && part.metadata.title) return part.metadata.title
+  const line = (typeof part?.input.code === "string" ? part.input.code : undefined)
     ?.split("\n")
     .map((item) => item.trim())
     .find((item) => item.length > 0)
-  return line ?? "Script"
+  return line ?? job.title ?? "Script"
 }
