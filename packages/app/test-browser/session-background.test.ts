@@ -328,19 +328,46 @@ describe("createSessionBackground", () => {
       expect(background.scripts()).toEqual([])
 
       setStore("messages", [
-        assistant("current", [
-          tool(
-            "script-part",
-            "execute",
-            { jobID: "cm_script" },
-            // The options line says how the script runs, so the label comes from the code after it.
-            { code: '// @options: {"background": true}\nawait build()' },
-          ),
-        ]),
+        assistant("current", [tool("script-part", "execute", { jobID: "cm_script" }, { code: "await build()" })]),
       ])
       expect(background.scripts()).toEqual([
         { id: "cm_script", type: "script", label: "await build()", started: 11 },
       ])
+      dispose()
+    })
+  })
+
+  test("names a script by the title the execute tool gave it", () => {
+    createRoot((dispose) => {
+      const code = '// @options: {"background": true}\nawait build()'
+      const background = createSessionBackground({
+        sessionID: () => "root",
+        messages: () => [
+          assistant("current", [
+            tool("running-part", "execute", { background: true, title: "await test()" }, { code }, "running", {
+              created: 10,
+              ran: 11,
+            }),
+            tool("script-part", "execute", { jobID: "cm_script" }, { code }),
+          ]),
+        ],
+        sessions: () => [],
+        status: () => "idle",
+        shells: () => [],
+        jobs: () => [
+          {
+            kind: "codemode",
+            id: "cm_script",
+            sessionID: "root",
+            status: "running",
+            title: "await build()",
+            time: { started: 11 },
+          },
+        ],
+      })
+
+      expect(background.scripts().map((script) => script.label)).toEqual(["await build()"])
+      expect(background.blocking().map((task) => task.label)).toEqual(["await test()"])
       dispose()
     })
   })

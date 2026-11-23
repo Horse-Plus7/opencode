@@ -5,6 +5,8 @@ import { CodeModeDiffs } from "@opencode/core/codemode/diffs"
 import { CodeModeTool } from "@opencode/core/codemode/tool"
 import { Permission } from "@opencode/core/permission"
 import { Tool } from "@opencode/core/tool"
+import { Model } from "@opencode/schema/model"
+import { Provider } from "@opencode/schema/provider"
 import { definition, execute } from "@opencode/core/tool/runtime"
 import { ai, type LanguageModel } from "@opencode/ai/effect"
 import { Anthropic, OpenAI } from "@opencode/ai/providers"
@@ -34,15 +36,20 @@ const createCodeMode = (
   tools: ReadonlyMap<string, Info>,
   permission = allowAll,
   services?: Context.Context<CodeModeTool.Services>,
-  optionsLine = false,
+  model?: Model.Info,
 ) =>
   CodeModeTool.create(
     { tools },
     (_, tool, input, context) => execute(tool, input, context),
     permission,
     services,
-    optionsLine,
+    model,
   )
+
+const rawTextModel = {
+  ...Model.Info.default(Provider.ID.make("openai"), Model.ID.make("gpt-6.2-sol")),
+  capabilities: { tools: true, input: ["text"], output: ["text"], freeform: ["text"] },
+} satisfies Model.Info
 
 test("execute takes raw code as freeform text, and Code Mode calls freeform tools with a string", async () => {
   const input = Schema.Struct({ text: Schema.NonEmptyString })
@@ -92,27 +99,21 @@ test("with full_codemode, execute names Bun's file APIs instead of ruling out fi
   expect(description).not.toContain("direct filesystem access")
 })
 
-test("with full_codemode, execute goes out as raw code with an options line for Lark models and as JSON otherwise", async () => {
-  const body = (model: LanguageModel, optionsLine: boolean) =>
+test("with full_codemode, execute goes out as raw code with an options line for raw-text models and as JSON otherwise", async () => {
+  const body = (model: LanguageModel, session?: Model.Info) =>
     Effect.runPromise(
       compileRequest(
         ai.request({
           model,
           prompt: "Run it.",
-          tools: [definition(createCodeMode(new Map(), allowAll, codeModeServices(process.cwd()), optionsLine))],
+          tools: [definition(createCodeMode(new Map(), allowAll, codeModeServices(process.cwd()), session))],
         }),
       ).pipe(Effect.map((prepared) => prepared.body)),
     )
-  const gpt = await body(OpenAI.model("gpt-6.2-sol", { apiKey: "test" }), true)
-  expect(gpt.tools).toMatchObject([
-    {
-      type: "custom",
-      name: "execute",
-      format: { type: "grammar", syntax: "lark", definition: expect.stringContaining(String.raw`\/\/ @options:`) },
-    },
-  ])
+  const gpt = await body(OpenAI.model("gpt-6.2-sol", { apiKey: "test" }), rawTextModel)
+  expect(gpt.tools).toMatchObject([{ type: "custom", name: "execute", format: { type: "text" } }])
   expect(gpt.tools[0].description).toContain("`// @options: <JSON object>`")
-  const claude = await body(Anthropic.model("claude-opus-5-5", { apiKey: "test" }), false)
+  const claude = await body(Anthropic.model("claude-opus-5-5", { apiKey: "test" }))
   expect(claude.tools).toMatchObject([{ name: "execute", input_schema: { properties: { timeout: {}, background: {} } } }])
 })
 

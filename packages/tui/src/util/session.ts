@@ -81,9 +81,10 @@ export function ownedJobs(jobs: readonly JobInfo[], sessionID: string, parentID:
   })
 }
 
-// A script moved to the background ends its execute call with the job's id; its first line of code names it, skipping the
-// `// @options:` line that sets how it runs.
+// A script is named by its job's title, which the execute tool sets from its code. A job without one falls back to the
+// first line of the code that started it.
 export function scriptLabel(messages: readonly SessionMessageInfo[], job: JobInfo) {
+  if (job.title) return job.title
   const code = messages
     .flatMap((message) => (message.type === "assistant" ? message.content : []))
     .flatMap((part) =>
@@ -99,6 +100,6 @@ export function scriptLabel(messages: readonly SessionMessageInfo[], job: JobInf
   const line = code
     ?.split("\n")
     .map((item) => item.trim())
-    .find((item) => item.length > 0 && !item.startsWith("// @options:"))
-  return line ?? job.title ?? "Script"
+    .find((item) => item.length > 0)
+  return line ?? "Script"
 }

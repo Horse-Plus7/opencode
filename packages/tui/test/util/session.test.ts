@@ -48,7 +48,7 @@ test("ownedJobs follows a subagent job to its child when the child's parent is n
   ])
 })
 
-test("scriptLabel names a script by its first line of code, then its title", () => {
+test("scriptLabel names a script by its job title, then its first line of code", () => {
   const job: JobInfo = { kind: "codemode", id: "cm_1", sessionID: "session", status: "running", time: { started: 1 } }
   const messages = [
     {
@@ -65,23 +65,10 @@ test("scriptLabel names a script by its first line of code, then its title", () 
     },
   ] as unknown as SessionMessageInfo[]
   expect(scriptLabel(messages, job)).toBe("// Build both")
-  // The options line says how the script runs, not what it does.
-  const withOptions = structuredClone(messages)
-  Object.assign(withOptions[0]!, {
-    content: [
-      {
-        type: "tool",
-        id: "part",
-        name: "execute",
-        state: {
-          status: "completed",
-          input: { code: '// @options: {"background": true}\nawait tools.shell({ command: "bun test" })' },
-          metadata: { jobID: "cm_1" },
-        },
-      },
-    ],
-  })
-  expect(scriptLabel(withOptions, job)).toBe('await tools.shell({ command: "bun test" })')
+  // The job's title, which the execute tool sets, names the script first.
+  expect(scriptLabel(messages, { ...job, title: 'await tools.shell({ command: "bun test" })' })).toBe(
+    'await tools.shell({ command: "bun test" })',
+  )
   expect(scriptLabel([], { ...job, title: "Build" })).toBe("Build")
   expect(scriptLabel([], job)).toBe("Script")
 })

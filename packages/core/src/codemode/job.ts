@@ -23,8 +23,8 @@ export function notice(job: Pick<Job.Info, "id" | "status" | "output" | "error">
 const BLOCK_TIMEOUT = "2 minutes"
 
 type Execute = (context: Tool.Context) => Effect.Effect<Tool.NormalizedResult, Tool.Error>
-/** The execute call's own `timeout` and `background` inputs, which only exist with `full_codemode`. */
-export type Options = { readonly timeout?: number; readonly background?: boolean }
+/** The execute call's own `timeout` and `background` inputs, which only exist with `full_codemode`, and its title. */
+export type Options = { readonly timeout?: number; readonly background?: boolean; readonly title?: string }
 type Run = (context: Tool.Context, execute: Execute, options?: Options) => ReturnType<Execute>
 
 /** Only a session drain can hand off work and report its result. */
@@ -56,11 +56,13 @@ export const make = Effect.fnUntraced(function* (
     const progress = Semaphore.makeUnsafe(1)
     return yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
-        yield* context.progress({ background: true })
+        // The title names the script in clients while it runs, from its first line of code.
+        const title = options?.title === undefined ? {} : { title: options.title }
+        yield* context.progress({ background: true, ...title })
         yield* jobs.start({
           id,
           type: "codemode",
-          title: "Code Mode script",
+          title: options?.title ?? "Code Mode script",
           recovery: { kind: "codemode", sessionID, jobID: id },
           run: Effect.gen(function* () {
             const exit = yield* execute({
@@ -69,7 +71,7 @@ export const make = Effect.fnUntraced(function* (
                 progress.withPermit(
                   Deferred.isDone(detached).pipe(
                     // The background flag tells clients this script can move to the background.
-                    Effect.flatMap((done) => (done ? Effect.void : context.progress({ ...update, background: true }))),
+                    Effect.flatMap((done) => (done ? Effect.void : context.progress({ ...update, background: true, ...title }))),
                   ),
                 ),
             }).pipe(Effect.provideService(Job.BlockingParent, id), Effect.interruptible, Effect.exit)

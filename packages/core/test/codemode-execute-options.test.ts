@@ -11,6 +11,8 @@ import type { Permission } from "@opencode/core/permission"
 import { Session } from "@opencode/core/session"
 import { SessionMessage } from "@opencode/core/session/message"
 import { Tool } from "@opencode/core/tool"
+import { Model } from "@opencode/schema/model"
+import { Provider } from "@opencode/schema/provider"
 import { ToolOutput } from "@opencode/core/tool-output"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Global } from "@opencode/util/global"
@@ -26,13 +28,20 @@ const it = testEffect(
   ),
 )
 
-const tool = (full: boolean, optionsLine = false) =>
+// A model that takes raw-text tools, and one that doesn't.
+const rawText = {
+  ...Model.Info.default(Provider.ID.make("openai"), Model.ID.make("gpt")),
+  capabilities: { tools: true, input: ["text"], output: ["text"], freeform: ["text"] },
+} satisfies Model.Info
+const jsonOnly = Model.Info.default(Provider.ID.make("anthropic"), Model.ID.make("claude"))
+
+const tool = (full: boolean, model?: Model.Info) =>
   CodeModeTool.create(
     { tools: new Map(), namespaces: new Map() },
     () => Effect.die("unused"),
     {} as Permission.Interface,
     full ? (Context.empty() as never) : undefined,
-    optionsLine,
+    model,
   )
 
 const context = (sessionID: string): Tool.Context => ({
@@ -100,21 +109,33 @@ describe("execute timeout and background", () => {
     }),
   )
 
-  it.effect("takes raw code with an optional options line when the model takes Lark grammars", () =>
+  it.effect("takes raw code with an optional options line when the model takes raw-text tools", () =>
     Effect.sync(() => {
-      const lark = tool(true, true)
-      expect(lark.input).toBe(CodeMode.Input)
-      expect(lark.freeform).toMatchObject({ type: "lark", grammar: expect.stringContaining(String.raw`\/\/ @options:`) })
-      expect(lark.description).toContain('start the code with one line `// @options: <JSON object>`')
+      expect(tool(true, rawText).input).toBe(CodeMode.Input)
+      expect(tool(true, rawText).freeform).toEqual({ type: "text" })
+      expect(tool(true, rawText).description).toContain('start the code with one line `// @options: <JSON object>`')
+      expect(Object.keys(tool(true, jsonOnly).input.fields)).toEqual(["code", "timeout", "background"])
+      expect(tool(true, jsonOnly).description).not.toContain("// @options:")
       // Without full_codemode there are no options, so the line isn't offered.
-      expect(tool(false, true).freeform).toEqual({ type: "text" })
-      expect(tool(false, true).description).toBe(tool(false).description)
+      expect(tool(false, rawText).description).toBe(tool(false).description)
+      expect(CodeModeTool.variant(false, rawText)).toBe("plain")
+      expect(CodeModeTool.variant(true, rawText)).not.toBe(CodeModeTool.variant(true, jsonOnly))
+    }),
+  )
+
+  it.effect("names a job by its first line of code", () =>
+    Effect.sync(() => {
+      expect(CodeModeTool.jobOptions({ code: "\n  await tools.shell({ command: \"bun test\" })\nreturn 1", background: true })).toEqual({
+        background: true,
+        title: 'await tools.shell({ command: "bun test" })',
+      })
+      expect(CodeModeTool.jobOptions({ code: "x()", timeout: 0 })).toEqual({ title: "x()" })
     }),
   )
 
   it.effect("moves a leading options line into timeout and background, and reports one it can't apply", () =>
     Effect.sync(() => {
-      const split = (code: string) => CodeModeTool.splitOptions({ code })
+      const split = (code: string) => CodeModeTool.prepare({ code })
       const ok = (input: unknown) => ({ input })
       expect(split('// @options: {"timeout": 5000, "background": true}\nreturn 1')).toEqual(
         ok({ code: "return 1", timeout: 5000, background: true }),
@@ -127,7 +148,7 @@ describe("execute timeout and background", () => {
         ok({ code: "x()", timeout: 5 }),
       )
       expect(split("x()")).toEqual(ok({ code: "x()" }))
-      expect(CodeModeTool.splitOptions("x()")).toEqual(ok("x()"))
+      expect(CodeModeTool.prepare("x()")).toEqual(ok("x()"))
       // A line that can't be applied fails the call, as an invalid JSON field would.
       for (const code of ["// @options: {timeout}\nx()", '// @options: {"timeout": -1}\nx()', '// @options: ["x"]\nx()'])
         expect(split(code)).toEqual({ error: expect.stringContaining("must be followed by a JSON object") })

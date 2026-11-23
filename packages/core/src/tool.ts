@@ -11,6 +11,7 @@ import { makeLocationNode } from "@opencode/util/effect/app-node"
 import type { Agent } from "./agent.js"
 import { CodeModeCatalog } from "./codemode/catalog.js"
 import { CodeModeJob } from "./codemode/job.js"
+import type { Model } from "@opencode/schema/model"
 import { CodeModeTool } from "./codemode/tool.js"
 import { Flag } from "./flag.js"
 import { Image } from "./image.js"
@@ -72,8 +73,8 @@ export interface SnapshotOptions {
    */
   readonly services?: Context.Context<CodeModeTool.Services>
   readonly tools?: Policy
-  /** The session's model takes Lark grammars, so with `full_codemode` `execute` takes its options on a first line. */
-  readonly optionsLine?: boolean
+  /** The session's model, which tools may shape themselves for. */
+  readonly model?: Model.Info
 }
 
 export interface Interface extends State.Transformable<Editor> {
@@ -334,8 +335,7 @@ const layer = Layer.effect(
           const codemode = !codeModeEnabled
             ? undefined
             : (() => {
-                const optionsLine = full && options?.optionsLine === true
-                const key = `${full ? "1" : "0"}${optionsLine ? "1" : "0"}\0${codemodeEntries.map(([name]) => name).join("\0")}`
+                const key = `${CodeModeTool.variant(full, options?.model)}\0${codemodeEntries.map(([name]) => name).join("\0")}`
                 // Discovery is immutable for a registry revision and visible tool set. Keep executors
                 // fresh, but share the inventory, whose prepared runtime and much larger rendered catalog
                 // are cached by identity, and the execute tool's definition across steps.
@@ -353,7 +353,7 @@ const layer = Layer.effect(
                   (name, item, input, context) => run(inventory.tools, item, name, input, context),
                   permission,
                   full ? options.services : undefined,
-                  optionsLine,
+                  options?.model,
                 )
                 const entry = cached ?? {
                   inventory,
@@ -367,7 +367,7 @@ const layer = Layer.effect(
                   }
                   catalogs.set(key, entry)
                 }
-                return { tool, inventory, catalog: entry.value, definition: entry.definition, optionsLine }
+                return { tool, inventory, catalog: entry.value, definition: entry.definition }
               })()
           return {
             ...(codemode === undefined ? {} : { codeModeCatalog: codemode.catalog }),
@@ -388,13 +388,12 @@ const layer = Layer.effect(
               }
               const initialName = input.definitions?.get(input.call.name)?.name ?? input.call.name
               const initial = initialName === "execute" && codemode ? codemode.tool : direct.get(initialName)
-              // Hooks and the job see the options of an options line as fields, as they would from JSON.
-              const split =
-                initial === codemode?.tool && codemode?.optionsLine
-                  ? CodeModeTool.splitOptions(input.call.input)
+              const prepared =
+                full && initial !== undefined && initial === codemode?.tool
+                  ? CodeModeTool.prepare(input.call.input)
                   : { input: input.call.input }
-              if ("error" in split) return yield* new Tool.Error({ message: split.error })
-              const event = yield* beforeExecute(input.call.name, initial, split.input, context)
+              if ("error" in prepared) return yield* new Tool.Error({ message: prepared.error })
+              const event = yield* beforeExecute(input.call.name, initial, prepared.input, context)
               const requested = input.definitions?.get(event.tool)
               // Preserve session context removal and alias resolution, now after the repair hook.
               if (!requested && input.definitions && (direct.has(event.tool) || codemode?.tool.name === event.tool))
@@ -417,7 +416,7 @@ const layer = Layer.effect(
                     : executeTool(codemode.tool, name, event.input, ctx)
                 const background = yield* CodeModeJob.Current
                 return yield* background
-                  ? background(context, run, full && !found ? executeOptions(event.input) : undefined)
+                  ? background(context, run, full && !found ? CodeModeTool.jobOptions(event.input) : undefined)
                   : run(context)
               }
               const tool = direct.get(name)
@@ -577,13 +576,3 @@ export const node = makeLocationNode({
   layer,
   deps: [PluginHooks.node, Image.node, Permission.node, Flag.node],
 })
-
-// Only read once the input has the shape the full_codemode schema accepts; the tool still validates it when it runs.
-const executeOptions = (input: unknown): CodeModeJob.Options | undefined => {
-  if (typeof input !== "object" || input === null) return undefined
-  const { timeout, background } = input as Record<string, unknown>
-  return {
-    ...(typeof timeout === "number" && Number.isInteger(timeout) && timeout > 0 ? { timeout } : {}),
-    ...(background === true ? { background } : {}),
-  }
-}

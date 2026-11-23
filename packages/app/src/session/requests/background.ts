@@ -102,7 +102,8 @@ export function createSessionBackground(input: {
                 type: "execute",
                 partID: part.id,
                 id: undefined,
-                label: firstLine(text(part.state.input.code)),
+                // The execute tool titles a script from its code; older scripts fall back to their first line.
+                label: text(part.state.metadata.title) ?? firstLine(text(part.state.input.code)),
                 agent: undefined,
                 started: part.time.ran ?? part.time.created,
                 commands: executeShellCommands(part.state.metadata.toolCalls),
@@ -230,7 +231,7 @@ export function createSessionBackground(input: {
         {
           id: job.id,
           type: "script" as const,
-          label: current.scripts.get(job.id) ?? job.id,
+          label: job.title ?? current.scripts.get(job.id) ?? job.id,
           started: job.time.started,
         },
       ]
@@ -246,12 +247,11 @@ function oldestFirst<T extends { id: string }>(items: readonly T[], created: (it
   return items.toSorted((a, b) => created(a) - created(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }
 
-// Skips the `// @options:` line that sets how a script runs, which says nothing about what it does.
 function firstLine(code: string | undefined) {
   return code
     ?.split("\n")
     .map((line) => line.trim())
-    .find((line) => line.length > 0 && !line.startsWith("// @options:"))
+    .find((line) => line.length > 0)
 }
 
 // The commands of the shells a running script has started and not finished.

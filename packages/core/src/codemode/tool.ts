@@ -12,6 +12,7 @@ import type {
   Result,
 } from "@opencode/schema/tool"
 import { Identifier } from "@opencode/schema/identifier"
+import type { Model } from "@opencode/schema/model"
 import { CallID } from "@opencode/schema/tool"
 import { Clock, Context, Effect, Option, Ref, Schema, Scope, Semaphore } from "effect"
 import { toSessionError } from "../session/to-session-error.js"
@@ -26,6 +27,7 @@ import { CodeModeBun } from "./bun.js"
 import { CodeModeCatalog } from "./catalog.js"
 import { CodeModeDiffs } from "./diffs.js"
 import { CodeModeExecution } from "./execution.js"
+import type { CodeModeJob } from "./job.js"
 import { CodeModeFetch } from "./fetch.js"
 import { CodeModePath } from "./path.js"
 
@@ -138,38 +140,33 @@ export const FullInput = Schema.Struct({
   }),
 })
 
-/** The optional first line of an `execute` program that sets its `timeout` and `background` options. */
-export const OPTIONS_PREFIX = "// @options:"
-
-const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/g, (match) => `\\${match}`)
-
-// An optional options line, then the program. The line is a JavaScript comment, so the program runs the same with it.
-const OPTIONS_GRAMMAR = [
-  "start: options_source | plain_source",
-  "options_source: OPTIONS_LINE NEWLINE SOURCE",
-  "plain_source: SOURCE",
-  "",
-  `OPTIONS_LINE: /[ \\t]*${escapeRegex(OPTIONS_PREFIX)}[^\\r\\n]*/`,
-  String.raw`NEWLINE: /\r?\n/`,
-  String.raw`SOURCE: /[\s\S]+/`,
-  "",
-].join("\n")
+// With `full_codemode`, a model that takes raw-text tools writes `execute`'s options on the first line of its code instead
+// of in JSON fields, so its code never needs escaping. Only this module knows the line exists: callers pass the model to
+// `create`, `prepare` a call's input, and ask `jobOptions` how to run it.
+const OPTIONS_PREFIX = "// @options:"
 
 const OPTIONS_DESCRIPTION = `To set options, start the code with one line \`${OPTIONS_PREFIX} <JSON object>\` and put the program on the next line, for example \`${OPTIONS_PREFIX} {"background": true}\`. Options: \`timeout\`, the milliseconds to wait before the script moves to the background (default ${2 * 60 * 1_000}); \`background\`, true to return its job ID immediately.`
 
 const Options = Schema.Struct({ timeout: FullInput.fields.timeout, background: FullInput.fields.background })
 const decodeOptions = Schema.decodeUnknownOption(Schema.fromJsonString(Options))
 
+const takesRawText = (model: Model.Info | undefined) => model?.capabilities.freeform?.includes("text") === true
+
+/** Which form of `execute` `create` builds, for caching it. */
+export const variant = (full: boolean, model: Model.Info | undefined) =>
+  !full ? "plain" : takesRawText(model) ? "options-line" : "json-options"
+
 /**
- * Moves a leading options line out of `code` into `timeout` and `background`, and drops keys `execute` doesn't take, as
- * JSON input does. A line that isn't valid options, or has no program after it, fails the call so the model learns its
- * options were not applied.
+ * Moves a leading options line out of `code` into `timeout` and `background`, so hooks and the job see fields as they
+ * would from JSON. Runs for every model, so a line written after a mid-session model switch still applies. Keys
+ * `execute` doesn't take are dropped, as they are from JSON input; a line that isn't valid options, or has no program
+ * after it, fails the call.
  */
-export const splitOptions = (input: unknown): { readonly input: unknown } | { readonly error: string } => {
+export const prepare = (input: unknown): { readonly input: unknown } | { readonly error: string } => {
   if (typeof input !== "object" || input === null) return { input }
   const code = (input as { code?: unknown }).code
-  if (typeof code !== "string" || !new RegExp(`^[ \\t]*${escapeRegex(OPTIONS_PREFIX)}`).test(code)) return { input }
-  const line = new RegExp(`^[ \\t]*${escapeRegex(OPTIONS_PREFIX)}([^\\r\\n]*)\\r?\\n`).exec(code)
+  if (typeof code !== "string" || !/^[ \t]*\/\/ @options:/.test(code)) return { input }
+  const line = /^[ \t]*\/\/ @options:([^\r\n]*)\r?\n/.exec(code)
   if (!line || line[0].length === code.length)
     return { error: `Put the program on the lines after \`${OPTIONS_PREFIX}\`.` }
   const options = Option.getOrUndefined(decodeOptions(line[1]))
@@ -180,24 +177,40 @@ export const splitOptions = (input: unknown): { readonly input: unknown } | { re
   return { input: { ...input, ...options, code: code.slice(line[0].length) } }
 }
 
+/** How the job runner runs a prepared `execute` call: its options, and a title from its first line of code. */
+export const jobOptions = (input: unknown): CodeModeJob.Options => {
+  const fields = typeof input === "object" && input !== null ? (input as Record<string, unknown>) : {}
+  const title =
+    typeof fields.code === "string"
+      ? fields.code
+          .split("\n")
+          .map((line) => line.trim())
+          .find((line) => line.length > 0)
+      : undefined
+  return {
+    ...(typeof fields.timeout === "number" && Number.isInteger(fields.timeout) && fields.timeout > 0
+      ? { timeout: fields.timeout }
+      : {}),
+    ...(fields.background === true ? { background: true } : {}),
+    ...(title === undefined ? {} : { title }),
+  }
+}
+
 export const create = (
   inventory: Inventory,
   executeTool: (name: string, tool: Info, input: unknown, context: ToolContext) => Effect.Effect<Result, Error>,
   permission: Permission.Interface,
   /** With `full_codemode`, the session's services, which turn on the experimental `path` and `Bun` globals. */
   services?: Context.Context<Services>,
-  /**
-   * The model takes Lark grammars, so with `full_codemode` the options go on a first line of the raw code instead of in
-   * JSON fields, and the code itself never needs escaping.
-   */
-  optionsLine = false,
+  /** The session's model, which decides how `execute` takes its options with `full_codemode`. */
+  model?: Model.Info,
 ) => {
-  const lark = services !== undefined && optionsLine
+  const optionsLine = services !== undefined && takesRawText(model)
   return {
     name: "execute",
-    description: lark ? `${description(true)}\n${OPTIONS_DESCRIPTION}` : description(services !== undefined),
-    input: services && !lark ? FullInput : CodeMode.Input,
-    freeform: lark ? { type: "lark", grammar: OPTIONS_GRAMMAR } : { type: "text" },
+    description: optionsLine ? `${description(true)}\n${OPTIONS_DESCRIPTION}` : description(services !== undefined),
+    input: services && !optionsLine ? FullInput : CodeMode.Input,
+    freeform: { type: "text" },
     output: ExecuteOutput,
     execute: ({ code }, context) =>
       Effect.gen(function* () {

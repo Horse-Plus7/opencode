@@ -10,6 +10,8 @@ import { SessionMessage } from "@opencode/core/session/message"
 import { State } from "@opencode/core/state"
 import { CodeModeJob } from "@opencode/core/codemode/job"
 import { Tool } from "@opencode/core/tool"
+import { Model } from "@opencode/schema/model"
+import { Provider } from "@opencode/schema/provider"
 import type { Info } from "@opencode/schema/tool"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { codeModeListings, executeTool, toolDefinitions, toolNodeReplacements } from "./lib/tool"
@@ -108,10 +110,14 @@ describe("Code Mode path and Bun", () => {
 })
 
 describe("execute options line", () => {
-  const run = (optionsLine: boolean, code: string) =>
+  const rawText = {
+    ...Model.Info.default(Provider.ID.make("openai"), Model.ID.make("gpt")),
+    capabilities: { tools: true, input: ["text"], output: ["text"], freeform: ["text"] },
+  } satisfies Model.Info
+  const run = (model: Model.Info | undefined, code: string) =>
     Effect.gen(function* () {
       const tools = yield* Tool.Service
-      const snapshot = yield* tools.snapshot(undefined, { services: codeModeServices("/session/dir"), optionsLine })
+      const snapshot = yield* tools.snapshot(undefined, { services: codeModeServices("/session/dir"), model })
       const execute = snapshot.definitions.find((definition) => definition.name === "execute")!
       const handoffs: Array<CodeModeJob.Options | undefined> = []
       const result = yield* snapshot
@@ -124,34 +130,33 @@ describe("execute options line", () => {
       return { execute, handoffs, output: JSON.parse(result.output.output) }
     })
 
-  codeModeIt.effect("for a Lark model, execute takes raw code and its options line reaches the job", () =>
+  codeModeIt.effect("for a raw-text model, execute takes raw code and its options line reaches the job", () =>
     Effect.gen(function* () {
-      const result = yield* run(true, '// @options: {"timeout": 5000}\nreturn 1')
-      expect(result.execute.freeform).toMatchObject({ type: "lark" })
+      const result = yield* run(rawText, '// @options: {"timeout": 5000}\nreturn 1')
+      expect(result.execute.freeform).toEqual({ type: "text" })
       expect(Object.keys(result.execute.inputSchema.properties ?? {})).toEqual(["code"])
-      expect(result.handoffs).toEqual([{ timeout: 5000 }])
+      expect(result.handoffs).toEqual([{ timeout: 5000, title: "return 1" }])
       expect(result.output).toBe(1)
-      const invalid = yield* run(true, '// @options: {"timeout": "5s"}\nreturn 1').pipe(Effect.flip)
+      const invalid = yield* run(rawText, '// @options: {"timeout": "5s"}\nreturn 1').pipe(Effect.flip)
       expect(invalid.message).toContain("must be followed by a JSON object")
     }),
   )
 
-  codeModeIt.effect("other models keep timeout and background as JSON fields", () =>
+  codeModeIt.effect("other models keep JSON fields, and an options line still applies after a model switch", () =>
     Effect.gen(function* () {
-      const result = yield* run(false, '// @options: {"timeout": 5000}\nreturn 1')
-      expect(result.execute.freeform).toEqual({ type: "text" })
+      const result = yield* run(undefined, '// @options: {"timeout": 5000}\nreturn 1')
       expect(Object.keys(result.execute.inputSchema.properties ?? {})).toEqual(["code", "timeout", "background"])
-      // The line is only a comment here.
-      expect(result.handoffs).toEqual([{}])
+      expect(result.handoffs).toEqual([{ timeout: 5000, title: "return 1" }])
       expect(result.output).toBe(1)
     }),
   )
 
-  it.effect("without full_codemode, the options line is ignored", () =>
+  it.effect("without full_codemode, the options line is only a comment", () =>
     Effect.gen(function* () {
-      const result = yield* run(true, '// @options: {"timeout": 5000}\nreturn 1')
+      const result = yield* run(rawText, '// @options: {"timeout": "5s"}\nreturn 1')
       expect(result.execute.freeform).toEqual({ type: "text" })
       expect(result.handoffs).toEqual([undefined])
+      expect(result.output).toBe(1)
     }),
   )
 })
