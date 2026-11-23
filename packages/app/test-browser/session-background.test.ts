@@ -328,7 +328,15 @@ describe("createSessionBackground", () => {
       expect(background.scripts()).toEqual([])
 
       setStore("messages", [
-        assistant("current", [tool("script-part", "execute", { jobID: "cm_script" }, { code: "await build()" })]),
+        assistant("current", [
+          tool(
+            "script-part",
+            "execute",
+            { jobID: "cm_script" },
+            // The options line says how the script runs, so the label comes from the code after it.
+            { code: '// @options: {"background": true}\nawait build()' },
+          ),
+        ]),
       ])
       expect(background.scripts()).toEqual([
         { id: "cm_script", type: "script", label: "await build()", started: 11 },

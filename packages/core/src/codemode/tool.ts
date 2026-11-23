@@ -139,18 +139,21 @@ export const FullInput = Schema.Struct({
 })
 
 /** The optional first line of an `execute` program that sets its `timeout` and `background` options. */
-export const OPTIONS_PREFIX = "// @exec:"
+export const OPTIONS_PREFIX = "// @options:"
+
+const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/g, (match) => `\\${match}`)
 
 // An optional options line, then the program. The line is a JavaScript comment, so the program runs the same with it.
-const OPTIONS_GRAMMAR = String.raw`
-start: options_source | plain_source
-options_source: OPTIONS_LINE NEWLINE SOURCE
-plain_source: SOURCE
-
-OPTIONS_LINE: /[ \t]*\/\/ @exec:[^\r\n]*/
-NEWLINE: /\r?\n/
-SOURCE: /[\s\S]+/
-`
+const OPTIONS_GRAMMAR = [
+  "start: options_source | plain_source",
+  "options_source: OPTIONS_LINE NEWLINE SOURCE",
+  "plain_source: SOURCE",
+  "",
+  `OPTIONS_LINE: /[ \\t]*${escapeRegex(OPTIONS_PREFIX)}[^\\r\\n]*/`,
+  String.raw`NEWLINE: /\r?\n/`,
+  String.raw`SOURCE: /[\s\S]+/`,
+  "",
+].join("\n")
 
 const OPTIONS_DESCRIPTION = `To set options, start the code with one line \`${OPTIONS_PREFIX} <JSON object>\` and put the program on the next line, for example \`${OPTIONS_PREFIX} {"background": true}\`. Options: \`timeout\`, the milliseconds to wait before the script moves to the background (default ${2 * 60 * 1_000}); \`background\`, true to return its job ID immediately.`
 
@@ -165,8 +168,8 @@ const decodeOptions = Schema.decodeUnknownOption(Schema.fromJsonString(Options))
 export const splitOptions = (input: unknown): { readonly input: unknown } | { readonly error: string } => {
   if (typeof input !== "object" || input === null) return { input }
   const code = (input as { code?: unknown }).code
-  if (typeof code !== "string" || !/^[ \t]*\/\/ @exec:/.test(code)) return { input }
-  const line = /^[ \t]*\/\/ @exec:([^\r\n]*)\r?\n/.exec(code)
+  if (typeof code !== "string" || !new RegExp(`^[ \\t]*${escapeRegex(OPTIONS_PREFIX)}`).test(code)) return { input }
+  const line = new RegExp(`^[ \\t]*${escapeRegex(OPTIONS_PREFIX)}([^\\r\\n]*)\\r?\\n`).exec(code)
   if (!line || line[0].length === code.length)
     return { error: `Put the program on the lines after \`${OPTIONS_PREFIX}\`.` }
   const options = Option.getOrUndefined(decodeOptions(line[1]))

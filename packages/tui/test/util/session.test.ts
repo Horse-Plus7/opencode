@@ -65,6 +65,23 @@ test("scriptLabel names a script by its first line of code, then its title", () 
     },
   ] as unknown as SessionMessageInfo[]
   expect(scriptLabel(messages, job)).toBe("// Build both")
+  // The options line says how the script runs, not what it does.
+  const withOptions = structuredClone(messages)
+  Object.assign(withOptions[0]!, {
+    content: [
+      {
+        type: "tool",
+        id: "part",
+        name: "execute",
+        state: {
+          status: "completed",
+          input: { code: '// @options: {"background": true}\nawait tools.shell({ command: "bun test" })' },
+          metadata: { jobID: "cm_1" },
+        },
+      },
+    ],
+  })
+  expect(scriptLabel(withOptions, job)).toBe('await tools.shell({ command: "bun test" })')
   expect(scriptLabel([], { ...job, title: "Build" })).toBe("Build")
   expect(scriptLabel([], job)).toBe("Script")
 })

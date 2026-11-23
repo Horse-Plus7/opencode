@@ -108,10 +108,10 @@ test("with full_codemode, execute goes out as raw code with an options line for 
     {
       type: "custom",
       name: "execute",
-      format: { type: "grammar", syntax: "lark", definition: expect.stringContaining(String.raw`\/\/ @exec:`) },
+      format: { type: "grammar", syntax: "lark", definition: expect.stringContaining(String.raw`\/\/ @options:`) },
     },
   ])
-  expect(gpt.tools[0].description).toContain("`// @exec: <JSON object>`")
+  expect(gpt.tools[0].description).toContain("`// @options: <JSON object>`")
   const claude = await body(Anthropic.model("claude-opus-5-5", { apiKey: "test" }), false)
   expect(claude.tools).toMatchObject([{ name: "execute", input_schema: { properties: { timeout: {}, background: {} } } }])
 })

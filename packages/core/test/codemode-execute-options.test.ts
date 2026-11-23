@@ -104,8 +104,8 @@ describe("execute timeout and background", () => {
     Effect.sync(() => {
       const lark = tool(true, true)
       expect(lark.input).toBe(CodeMode.Input)
-      expect(lark.freeform).toMatchObject({ type: "lark", grammar: expect.stringContaining(String.raw`\/\/ @exec:`) })
-      expect(lark.description).toContain('start the code with one line `// @exec: <JSON object>`')
+      expect(lark.freeform).toMatchObject({ type: "lark", grammar: expect.stringContaining(String.raw`\/\/ @options:`) })
+      expect(lark.description).toContain('start the code with one line `// @options: <JSON object>`')
       // Without full_codemode there are no options, so the line isn't offered.
       expect(tool(false, true).freeform).toEqual({ type: "text" })
       expect(tool(false, true).description).toBe(tool(false).description)
@@ -116,22 +116,22 @@ describe("execute timeout and background", () => {
     Effect.sync(() => {
       const split = (code: string) => CodeModeTool.splitOptions({ code })
       const ok = (input: unknown) => ({ input })
-      expect(split('// @exec: {"timeout": 5000, "background": true}\nreturn 1')).toEqual(
+      expect(split('// @options: {"timeout": 5000, "background": true}\nreturn 1')).toEqual(
         ok({ code: "return 1", timeout: 5000, background: true }),
       )
-      expect(split('  // @exec: {"background":true}\r\nreturn 1')).toEqual(
+      expect(split('  // @options: {"background":true}\r\nreturn 1')).toEqual(
         ok({ code: "return 1", background: true }),
       )
       // Keys execute doesn't take are dropped, as they are from JSON input.
-      expect(split('// @exec: {"yield_time_ms": 10000, "timeout": 5}\nx()')).toEqual(
+      expect(split('// @options: {"yield_time_ms": 10000, "timeout": 5}\nx()')).toEqual(
         ok({ code: "x()", timeout: 5 }),
       )
       expect(split("x()")).toEqual(ok({ code: "x()" }))
       expect(CodeModeTool.splitOptions("x()")).toEqual(ok("x()"))
       // A line that can't be applied fails the call, as an invalid JSON field would.
-      for (const code of ["// @exec: {timeout}\nx()", '// @exec: {"timeout": -1}\nx()', '// @exec: ["x"]\nx()'])
+      for (const code of ["// @options: {timeout}\nx()", '// @options: {"timeout": -1}\nx()', '// @options: ["x"]\nx()'])
         expect(split(code)).toEqual({ error: expect.stringContaining("must be followed by a JSON object") })
-      for (const code of ['// @exec: {"timeout": 5}', '// @exec: {"timeout": 5}\n'])
+      for (const code of ['// @options: {"timeout": 5}', '// @options: {"timeout": 5}\n'])
         expect(split(code)).toEqual({ error: expect.stringContaining("Put the program") })
     }),
   )

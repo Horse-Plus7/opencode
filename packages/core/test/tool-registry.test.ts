@@ -126,19 +126,19 @@ describe("execute options line", () => {
 
   codeModeIt.effect("for a Lark model, execute takes raw code and its options line reaches the job", () =>
     Effect.gen(function* () {
-      const result = yield* run(true, '// @exec: {"timeout": 5000}\nreturn 1')
+      const result = yield* run(true, '// @options: {"timeout": 5000}\nreturn 1')
       expect(result.execute.freeform).toMatchObject({ type: "lark" })
       expect(Object.keys(result.execute.inputSchema.properties ?? {})).toEqual(["code"])
       expect(result.handoffs).toEqual([{ timeout: 5000 }])
       expect(result.output).toBe(1)
-      const invalid = yield* run(true, '// @exec: {"timeout": "5s"}\nreturn 1').pipe(Effect.flip)
+      const invalid = yield* run(true, '// @options: {"timeout": "5s"}\nreturn 1').pipe(Effect.flip)
       expect(invalid.message).toContain("must be followed by a JSON object")
     }),
   )
 
   codeModeIt.effect("other models keep timeout and background as JSON fields", () =>
     Effect.gen(function* () {
-      const result = yield* run(false, '// @exec: {"timeout": 5000}\nreturn 1')
+      const result = yield* run(false, '// @options: {"timeout": 5000}\nreturn 1')
       expect(result.execute.freeform).toEqual({ type: "text" })
       expect(Object.keys(result.execute.inputSchema.properties ?? {})).toEqual(["code", "timeout", "background"])
       // The line is only a comment here.
@@ -149,7 +149,7 @@ describe("execute options line", () => {
 
   it.effect("without full_codemode, the options line is ignored", () =>
     Effect.gen(function* () {
-      const result = yield* run(true, '// @exec: {"timeout": 5000}\nreturn 1')
+      const result = yield* run(true, '// @options: {"timeout": 5000}\nreturn 1')
       expect(result.execute.freeform).toEqual({ type: "text" })
       expect(result.handoffs).toEqual([undefined])
     }),
